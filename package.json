@@ -8,7 +8,7 @@
   ],
   "scripts": {
     "dev": "concurrently \"npm run dev --workspace @vacancy-radar/api\" \"npm run dev --workspace @vacancy-radar/web\" \"npm run dev --workspace @vacancy-radar/worker\"",
-    "build": "npm run build --workspaces",
+    "build": "npm run build --workspace @vacancy-radar/shared && npm run build --workspace @vacancy-radar/api && npm run build --workspace @vacancy-radar/worker && npm run build --workspace @vacancy-radar/web",
     "test": "vitest run",
     "lint": "npm run lint --workspaces --if-present",
     "prisma:generate": "prisma generate",
