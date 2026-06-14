@@ -216,11 +216,16 @@ async function processSource(sourceName: SourceName) {
       where: { id: run.id },
       data: { status: "success", importedCount, duplicateCount, matchedCount, notifiedCount, failedCount, finishedAt: new Date() }
     });
+    console.log(
+      `${sourceName} fetch success: imported=${importedCount} duplicates=${duplicateCount} matched=${matchedCount} notified=${notifiedCount} failed=${failedCount}`
+    );
   } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
     await prisma.sourceFetchRun.update({
       where: { id: run.id },
-      data: { status: "failed", failedCount: 1, error: error instanceof Error ? error.message : String(error), finishedAt: new Date() }
+      data: { status: "failed", failedCount: 1, error: message, finishedAt: new Date() }
     });
+    console.error(`${sourceName} fetch failed: ${message}`);
   }
 }
 

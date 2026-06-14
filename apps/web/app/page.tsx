@@ -34,6 +34,18 @@ type FetchRun = {
 
 const splitList = (value: string) => value.split(",").map((item) => item.trim()).filter(Boolean);
 
+const summarizeFetchRuns = (latestRuns: FetchRun[]) => {
+  const imported = latestRuns.reduce((sum, run) => sum + run.importedCount, 0);
+  const duplicates = latestRuns.reduce((sum, run) => sum + run.duplicateCount, 0);
+  const failed = latestRuns.reduce((sum, run) => sum + run.failedCount, 0);
+  const hasRunning = latestRuns.some((run) => run.status === "running");
+
+  if (hasRunning) return "Fetch running";
+  if (failed > 0) return `Fetch finished with ${failed} failed item${failed === 1 ? "" : "s"}`;
+  if (imported > 0) return `Fetch finished: ${imported} new, ${duplicates} duplicate${duplicates === 1 ? "" : "s"}`;
+  return `Fetch finished: no new vacancies, ${duplicates} duplicate${duplicates === 1 ? "" : "s"} skipped`;
+};
+
 export default function Page() {
   const [vacancies, setVacancies] = useState<Vacancy[]>([]);
   const [runs, setRuns] = useState<FetchRun[]>([]);
@@ -113,7 +125,21 @@ export default function Page() {
   async function runFetch() {
     setStatus("Fetch queued");
     await fetch(`${API_URL}/admin/fetch-runs/run`, { method: "POST" });
-    setTimeout(() => refresh().catch((error) => setStatus(error.message)), 1200);
+    for (const delay of [900, 1800, 3200]) {
+      setTimeout(async () => {
+        try {
+          const [vacanciesResponse, runsResponse] = await Promise.all([
+            fetch(`${API_URL}/vacancies`).then((response) => response.json()),
+            fetch(`${API_URL}/admin/fetch-runs`).then((response) => response.json())
+          ]);
+          setVacancies(vacanciesResponse);
+          setRuns(runsResponse);
+          setStatus(summarizeFetchRuns(runsResponse.slice(0, 2)));
+        } catch (error) {
+          setStatus(error instanceof Error ? error.message : "Fetch status failed");
+        }
+      }, delay);
+    }
   }
 
   async function updateVacancy(id: string, action: "save" | "ignore") {

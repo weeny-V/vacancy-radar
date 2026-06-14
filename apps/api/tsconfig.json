@@ -3,7 +3,11 @@
   "compilerOptions": {
     "experimentalDecorators": true,
     "emitDecoratorMetadata": true,
-    "outDir": "dist"
+    "outDir": "dist",
+    "rootDir": "src",
+    "paths": {
+      "@vacancy-radar/shared": ["packages/shared/dist"]
+    }
   },
   "include": ["src/**/*.ts"]
 }
