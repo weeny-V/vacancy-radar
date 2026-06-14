@@ -1,0 +1,146 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum SourceName {
+  DOU
+  DJINNI
+}
+
+enum VacancyStatus {
+  NEW
+  SAVED
+  IGNORED
+}
+
+enum NotificationStatus {
+  PENDING
+  SENT
+  FAILED
+  SKIPPED
+}
+
+model User {
+  id                   String                @id @default(cuid())
+  email                String                @unique
+  name                 String
+  createdAt            DateTime              @default(now())
+  updatedAt            DateTime              @updatedAt
+  profile              JobProfile?
+  notificationChannels NotificationChannel[]
+  matches              VacancyMatch[]
+  notifications        Notification[]
+}
+
+model JobProfile {
+  id              String   @id @default(cuid())
+  userId          String   @unique
+  role            String
+  seniority       String
+  skills          String[]
+  location        String?
+  remoteOnly      Boolean  @default(true)
+  salaryMin       Int?
+  salaryCurrency  String   @default("USD")
+  includeKeywords String[]
+  excludeKeywords String[]
+  matchThreshold  Int      @default(60)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Source {
+  id          String           @id @default(cuid())
+  name        SourceName       @unique
+  baseUrl     String
+  enabled     Boolean          @default(true)
+  vacancies   Vacancy[]
+  fetchRuns   SourceFetchRun[]
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+}
+
+model Vacancy {
+  id             String         @id @default(cuid())
+  sourceId       String
+  source         Source         @relation(fields: [sourceId], references: [id])
+  sourceUrl      String         @unique
+  title          String
+  company        String?
+  location       String?
+  remoteType     String?
+  salaryMin      Int?
+  salaryMax      Int?
+  salaryCurrency String?
+  description    String
+  skills         String[]
+  publishedAt    DateTime?
+  firstSeenAt    DateTime       @default(now())
+  contentHash    String
+  status         VacancyStatus  @default(NEW)
+  matches        VacancyMatch[]
+  notifications  Notification[]
+
+  @@index([contentHash])
+}
+
+model VacancyMatch {
+  id        String   @id @default(cuid())
+  vacancyId String
+  userId    String
+  score     Int
+  reasons   String[]
+  blocked   Boolean  @default(false)
+  createdAt DateTime @default(now())
+  vacancy   Vacancy  @relation(fields: [vacancyId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([vacancyId, userId])
+}
+
+model NotificationChannel {
+  id        String   @id @default(cuid())
+  userId    String
+  type      String
+  target    String
+  enabled   Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Notification {
+  id        String             @id @default(cuid())
+  userId    String
+  vacancyId String
+  channel   String
+  status    NotificationStatus @default(PENDING)
+  error     String?
+  sentAt    DateTime?
+  createdAt DateTime           @default(now())
+  user      User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  vacancy   Vacancy            @relation(fields: [vacancyId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, vacancyId, channel])
+}
+
+model SourceFetchRun {
+  id             String     @id @default(cuid())
+  sourceId       String
+  status         String
+  importedCount  Int        @default(0)
+  duplicateCount Int        @default(0)
+  matchedCount   Int        @default(0)
+  notifiedCount  Int        @default(0)
+  failedCount    Int        @default(0)
+  error          String?
+  startedAt      DateTime   @default(now())
+  finishedAt     DateTime?
+  source         Source     @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+}

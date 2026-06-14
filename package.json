@@ -1,0 +1,31 @@
+{
+  "name": "vacancy-radar",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "concurrently \"npm run dev --workspace @vacancy-radar/api\" \"npm run dev --workspace @vacancy-radar/web\" \"npm run dev --workspace @vacancy-radar/worker\"",
+    "build": "npm run build --workspaces",
+    "test": "vitest run",
+    "lint": "npm run lint --workspaces --if-present",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate dev",
+    "prisma:push": "prisma db push",
+    "prisma:seed": "tsx prisma/seed.ts",
+    "docker:up": "docker compose up --build"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.15",
+    "concurrently": "^8.2.2",
+    "prisma": "^5.18.0",
+    "tsx": "^4.16.2",
+    "typescript": "^5.5.4",
+    "vitest": "^2.0.5"
+  },
+  "dependencies": {
+    "@prisma/client": "^5.18.0"
+  }
+}
