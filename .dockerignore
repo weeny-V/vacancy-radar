@@ -1,11 +1,10 @@
 node_modules
 .next
 dist
-coverage
-.env
-.env.local
-.DS_Store
+.git
 .idea
+outputs
+work
 *.log
 *.tsbuildinfo
-prisma/dev.db
+.env
