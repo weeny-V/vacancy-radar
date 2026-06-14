@@ -1,5 +1,4 @@
 import { PrismaClient, SourceName } from "@prisma/client";
-import { createHash } from "node:crypto";
 
 const prisma = new PrismaClient();
 
@@ -27,7 +26,7 @@ async function main() {
     }
   });
 
-  const dou = await prisma.source.upsert({
+  await prisma.source.upsert({
     where: { name: SourceName.DOU },
     update: {},
     create: { name: SourceName.DOU, baseUrl: "https://jobs.dou.ua" }
@@ -39,25 +38,6 @@ async function main() {
     create: { name: SourceName.DJINNI, baseUrl: "https://djinni.co/jobs" }
   });
 
-  const description = "React TypeScript remote product role with Next.js experience.";
-  await prisma.vacancy.upsert({
-    where: { sourceUrl: "https://jobs.dou.ua/companies/sample/vacancies/1/" },
-    update: {},
-    create: {
-      sourceId: dou.id,
-      sourceUrl: "https://jobs.dou.ua/companies/sample/vacancies/1/",
-      title: "Middle Frontend Developer",
-      company: "Sample Product",
-      location: "Remote",
-      remoteType: "remote",
-      salaryMin: 2500,
-      salaryMax: 3500,
-      salaryCurrency: "USD",
-      description,
-      skills: ["React", "TypeScript", "Next.js"],
-      contentHash: createHash("sha256").update(description).digest("hex")
-    }
-  });
 }
 
 main()

@@ -17,27 +17,6 @@ function hashVacancy(input: string) {
   return createHash("sha256").update(input).digest("hex");
 }
 
-function fallbackVacancies(source: SourceName): NormalizedVacancy[] {
-  const base = source === "DOU" ? "https://jobs.dou.ua" : "https://djinni.co/jobs";
-  const title = source === "DOU" ? "Middle Frontend Developer" : "React TypeScript Engineer";
-  const description = `${title}. Remote product team. React TypeScript Next.js.`;
-  return [{
-    source,
-    sourceUrl: `${base}/sample-${source.toLowerCase()}-frontend`,
-    title,
-    company: "Sample Product",
-    location: "Remote",
-    remoteType: "remote",
-    salaryMin: 2500,
-    salaryMax: 4000,
-    salaryCurrency: "USD",
-    description,
-    skills: ["React", "TypeScript", "Next.js"],
-    publishedAt: new Date(),
-    contentHash: hashVacancy(description)
-  }];
-}
-
 async function fetchHtml(url: string) {
   const response = await fetch(url, {
     headers: { "user-agent": "VacancyRadarMVP/0.1 (+local development)" }
@@ -49,67 +28,77 @@ async function fetchHtml(url: string) {
 }
 
 async function fetchDou(): Promise<NormalizedVacancy[]> {
-  try {
-    const html = await fetchHtml(sourceUrls.DOU);
-    const $ = cheerio.load(html);
-    const vacancies: NormalizedVacancy[] = [];
-    $(".vacancy").each((_, item) => {
-      const titleLink = $(item).find(".vt").first();
-      const title = titleLink.text().trim();
-      const href = titleLink.attr("href");
-      if (!title || !href) return;
-      const company = $(item).find(".company").first().text().trim() || null;
-      const location = $(item).find(".cities").first().text().trim() || "Remote";
-      const description = $(item).find(".sh-info").first().text().trim() || title;
-      const sourceUrl = canonicalizeUrl(new URL(href, "https://jobs.dou.ua").toString());
-      vacancies.push({
-        source: "DOU",
-        sourceUrl,
-        title,
-        company,
-        location,
-        remoteType: /remote|віддал/i.test(`${location} ${description}`) ? "remote" : null,
-        description,
-        skills: extractSkills(`${title} ${description}`),
-        contentHash: hashVacancy(`${title}|${company}|${description}`)
-      });
+  const html = await fetchHtml(sourceUrls.DOU);
+  const $ = cheerio.load(html);
+  const vacancies: NormalizedVacancy[] = [];
+  const seen = new Set<string>();
+
+  $("a[href*='/vacancies/']").each((_, link) => {
+    const href = $(link).attr("href");
+    const title = $(link).text().replace(/\s+/g, " ").trim();
+    if (!href || !title || !/\/companies\/[^/]+\/vacancies\/\d+\/?/.test(href)) return;
+
+    const sourceUrl = canonicalizeUrl(new URL(href, "https://jobs.dou.ua").toString());
+    if (seen.has(sourceUrl)) return;
+    seen.add(sourceUrl);
+
+    const container = $(link).closest("li, article, div");
+    const text = container.text().replace(/\s+/g, " ").trim() || title;
+    const company = container.find("a[href*='/companies/']").not(link).first().text().replace(/\s+/g, " ").trim() || null;
+    const location = container.find(".cities").first().text().replace(/\s+/g, " ").trim() || null;
+
+    vacancies.push({
+      source: "DOU",
+      sourceUrl,
+      title,
+      company,
+      location,
+      remoteType: /remote|віддал/i.test(text) ? "remote" : null,
+      description: text,
+      skills: extractSkills(`${title} ${text}`),
+      contentHash: hashVacancy(`${sourceUrl}|${title}|${text}`)
     });
-    return vacancies.length > 0 ? vacancies : fallbackVacancies("DOU");
-  } catch {
-    return fallbackVacancies("DOU");
-  }
+  });
+
+  return vacancies;
 }
 
 async function fetchDjinni(): Promise<NormalizedVacancy[]> {
-  try {
-    const html = await fetchHtml(sourceUrls.DJINNI);
-    const $ = cheerio.load(html);
-    const vacancies: NormalizedVacancy[] = [];
-    $("li.list-jobs__item, .job-list-item").each((_, item) => {
-      const titleLink = $(item).find("a.profile").first().length
-        ? $(item).find("a.profile").first()
-        : $(item).find("a").first();
-      const title = titleLink.text().trim();
-      const href = titleLink.attr("href");
-      if (!title || !href) return;
-      const description = $(item).text().replace(/\s+/g, " ").trim();
-      const sourceUrl = canonicalizeUrl(new URL(href, "https://djinni.co").toString());
-      vacancies.push({
-        source: "DJINNI",
-        sourceUrl,
-        title,
-        company: null,
-        location: /remote/i.test(description) ? "Remote" : null,
-        remoteType: /remote/i.test(description) ? "remote" : null,
-        description,
-        skills: extractSkills(`${title} ${description}`),
-        contentHash: hashVacancy(`${title}|${description}`)
-      });
+  const html = await fetchHtml(sourceUrls.DJINNI);
+  const $ = cheerio.load(html);
+  const vacancies: NormalizedVacancy[] = [];
+  const seen = new Set<string>();
+
+  $("a[href^='/jobs/']").each((_, link) => {
+    const href = $(link).attr("href");
+    const title = $(link).text().replace(/\s+/g, " ").trim();
+    if (!href || !title || !/^\/jobs\/\d+-.+\/?$/.test(href)) return;
+
+    const sourceUrl = canonicalizeUrl(new URL(href, "https://djinni.co").toString());
+    if (seen.has(sourceUrl)) return;
+    seen.add(sourceUrl);
+
+    const container = $(link).closest("li, article, div");
+    const description = container.text().replace(/\s+/g, " ").trim() || title;
+    const salary = description.match(/\$([0-9][0-9\s]*)/);
+    const salaryValue = salary?.[1] ? Number(salary[1].replace(/\s/g, "")) : null;
+
+    vacancies.push({
+      source: "DJINNI",
+      sourceUrl,
+      title,
+      company: null,
+      location: /remote|віддал/i.test(description) ? "Remote" : null,
+      remoteType: /remote|віддал/i.test(description) ? "remote" : null,
+      salaryMin: salaryValue,
+      salaryCurrency: salaryValue ? "USD" : null,
+      description,
+      skills: extractSkills(`${title} ${description}`),
+      contentHash: hashVacancy(`${sourceUrl}|${title}|${description}`)
     });
-    return vacancies.length > 0 ? vacancies : fallbackVacancies("DJINNI");
-  } catch {
-    return fallbackVacancies("DJINNI");
-  }
+  });
+
+  return vacancies;
 }
 
 function extractSkills(text: string) {
@@ -148,6 +137,9 @@ async function processSource(sourceName: SourceName) {
   try {
     const user = await prisma.user.findFirst({ include: { profile: true, notificationChannels: true } });
     const vacancies = sourceName === "DOU" ? await fetchDou() : await fetchDjinni();
+    if (vacancies.length === 0) {
+      throw new Error(`No vacancies parsed from ${sourceUrls[sourceName]}`);
+    }
     let importedCount = 0;
     let duplicateCount = 0;
     let matchedCount = 0;
