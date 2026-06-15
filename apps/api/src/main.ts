@@ -1,5 +1,18 @@
 import "reflect-metadata";
-import { Body, Controller, Get, Module, Param, Post, Query, Req, Res, UnauthorizedException } from "@nestjs/common";
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  ForbiddenException,
+  Get,
+  Module,
+  Param,
+  Post,
+  Query,
+  Req,
+  Res,
+  UnauthorizedException
+} from "@nestjs/common";
 import { NestFactory } from "@nestjs/core";
 import { PrismaClient, SourceName } from "@prisma/client";
 import { Queue } from "bullmq";
@@ -15,6 +28,7 @@ const appUserName = process.env.APP_USER_NAME ?? "Local Job Seeker";
 const appUserPassword = process.env.APP_USER_PASSWORD ?? "vacancy-radar-local";
 const authSecret = process.env.AUTH_SECRET ?? "vacancy-radar-dev-secret";
 const sessionCookieName = "vacancy_radar_session";
+const csrfCookieName = "vacancy_radar_csrf";
 const sessionTtlMs = 7 * 24 * 60 * 60 * 1000;
 const sourceDefaults: Record<SourceName, { baseUrl: string; searchUrl: string; queryLabel: string }> = {
   DOU: {
@@ -65,11 +79,43 @@ function createSessionToken(userId: string) {
   return `${userId}.${expiresAt}.${signSession(userId, expiresAt)}`;
 }
 
+function signCsrfToken(nonce: string) {
+  return createHmac("sha256", authSecret).update(nonce).digest("hex");
+}
+
+function createCsrfToken() {
+  const nonce = randomBytes(32).toString("hex");
+  return `${nonce}.${signCsrfToken(nonce)}`;
+}
+
+function verifyCsrfToken(token?: string) {
+  const [nonce, signature] = String(token ?? "").split(".");
+  if (!nonce || !signature) return false;
+  const expected = signCsrfToken(nonce);
+  const expectedBuffer = Buffer.from(expected);
+  const actualBuffer = Buffer.from(signature);
+  return expectedBuffer.length === actualBuffer.length && timingSafeEqual(expectedBuffer, actualBuffer);
+}
+
 function parseCookies(header?: string) {
   return Object.fromEntries((header ?? "").split(";").map((part) => {
     const [key, ...value] = part.trim().split("=");
     return [key, decodeURIComponent(value.join("="))];
   }).filter(([key]) => key));
+}
+
+function getHeaderValue(req: Request, name: string) {
+  const value = req.headers[name.toLowerCase()];
+  return Array.isArray(value) ? value[0] : value;
+}
+
+function requireCsrf(req: Request) {
+  const cookies = parseCookies(req.headers.cookie);
+  const cookieToken = cookies[csrfCookieName];
+  const headerToken = getHeaderValue(req, "x-csrf-token");
+  if (!cookieToken || !headerToken || cookieToken !== headerToken || !verifyCsrfToken(cookieToken)) {
+    throw new ForbiddenException("Invalid CSRF token");
+  }
 }
 
 async function requireUser(req: Request) {
@@ -99,6 +145,24 @@ function setSessionCookie(res: Response, token: string) {
   });
 }
 
+function setCsrfCookie(res: Response) {
+  const secure = process.env.NODE_ENV === "production";
+  const token = createCsrfToken();
+  res.cookie(csrfCookieName, token, {
+    httpOnly: false,
+    sameSite: "lax",
+    secure,
+    maxAge: sessionTtlMs,
+    path: "/"
+  });
+  return token;
+}
+
+function clearAuthCookies(res: Response) {
+  res.clearCookie(sessionCookieName, { path: "/" });
+  res.clearCookie(csrfCookieName, { path: "/" });
+}
+
 function assertRuntimeConfig() {
   if (process.env.NODE_ENV !== "production") return;
   if (!process.env.AUTH_SECRET || process.env.AUTH_SECRET === "change-this-before-deploying") {
@@ -107,6 +171,115 @@ function assertRuntimeConfig() {
   if (!process.env.APP_USER_PASSWORD || process.env.APP_USER_PASSWORD === "vacancy-radar-local") {
     throw new Error("APP_USER_PASSWORD must be set to a strong unique value in production");
   }
+}
+
+function assertObject(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new BadRequestException("Request body must be an object");
+  }
+  return value as Record<string, unknown>;
+}
+
+function stringField(body: Record<string, unknown>, key: string, options: { required?: boolean; max?: number } = {}) {
+  const value = body[key];
+  if (value === undefined || value === null || value === "") {
+    if (options.required) throw new BadRequestException(`${key} is required`);
+    return null;
+  }
+  if (typeof value !== "string") throw new BadRequestException(`${key} must be a string`);
+  const trimmed = value.trim();
+  if (options.required && !trimmed) throw new BadRequestException(`${key} is required`);
+  if (options.max && trimmed.length > options.max) throw new BadRequestException(`${key} is too long`);
+  return trimmed;
+}
+
+function booleanField(body: Record<string, unknown>, key: string, fallback: boolean) {
+  const value = body[key];
+  if (value === undefined || value === null) return fallback;
+  if (typeof value !== "boolean") throw new BadRequestException(`${key} must be a boolean`);
+  return value;
+}
+
+function numberField(body: Record<string, unknown>, key: string, options: { fallback?: number | null; min?: number; max?: number } = {}) {
+  const value = body[key];
+  if (value === undefined || value === null || value === "") return options.fallback ?? null;
+  const numberValue = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(numberValue)) throw new BadRequestException(`${key} must be a number`);
+  const integer = Math.trunc(numberValue);
+  if (options.min !== undefined && integer < options.min) throw new BadRequestException(`${key} is too low`);
+  if (options.max !== undefined && integer > options.max) throw new BadRequestException(`${key} is too high`);
+  return integer;
+}
+
+function stringArrayField(body: Record<string, unknown>, key: string, maxItems = 50) {
+  const value = body[key];
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) throw new BadRequestException(`${key} must be an array`);
+  if (value.length > maxItems) throw new BadRequestException(`${key} has too many items`);
+  return value.map((item) => {
+    if (typeof item !== "string") throw new BadRequestException(`${key} must contain only strings`);
+    return item.trim();
+  }).filter(Boolean).slice(0, maxItems);
+}
+
+function urlField(body: Record<string, unknown>, key: string, fallback: string) {
+  const value = stringField(body, key, { max: 500 }) ?? fallback;
+  try {
+    const url = new URL(value);
+    if (!["http:", "https:"].includes(url.protocol)) throw new Error("Unsupported protocol");
+    return url.toString();
+  } catch {
+    throw new BadRequestException(`${key} must be a valid HTTP URL`);
+  }
+}
+
+function validateSourceName(value: string) {
+  const normalizedName = value.toUpperCase();
+  if (normalizedName !== SourceName.DOU && normalizedName !== SourceName.DJINNI) {
+    throw new BadRequestException("Unsupported source");
+  }
+  return normalizedName as SourceName;
+}
+
+function profileInput(bodyValue: unknown) {
+  const body = assertObject(bodyValue);
+  return {
+    role: stringField(body, "role", { required: true, max: 100 })!,
+    seniority: stringField(body, "seniority", { required: true, max: 80 })!,
+    skills: stringArrayField(body, "skills"),
+    location: stringField(body, "location", { max: 120 }),
+    remoteOnly: booleanField(body, "remoteOnly", true),
+    salaryMin: numberField(body, "salaryMin", { fallback: null, min: 0, max: 1_000_000 }),
+    salaryCurrency: stringField(body, "salaryCurrency", { max: 12 }) ?? "USD",
+    includeKeywords: stringArrayField(body, "includeKeywords"),
+    excludeKeywords: stringArrayField(body, "excludeKeywords"),
+    matchThreshold: numberField(body, "matchThreshold", { fallback: 60, min: 0, max: 100 }) ?? 60
+  };
+}
+
+function sourceInput(bodyValue: unknown, defaults: { baseUrl: string; searchUrl: string; queryLabel: string }) {
+  const body = assertObject(bodyValue);
+  return {
+    baseUrl: urlField(body, "baseUrl", defaults.baseUrl),
+    searchUrl: urlField(body, "searchUrl", defaults.searchUrl),
+    queryLabel: stringField(body, "queryLabel", { max: 120 }),
+    enabled: booleanField(body, "enabled", true)
+  };
+}
+
+function telegramInput(bodyValue: unknown) {
+  const body = assertObject(bodyValue);
+  const chatId = stringField(body, "chatId", { required: true, max: 80 })!;
+  if (!/^-?\d{4,32}$/.test(chatId)) throw new BadRequestException("chatId must be a Telegram numeric chat ID");
+  return { chatId };
+}
+
+function loginInput(bodyValue: unknown) {
+  const body = assertObject(bodyValue);
+  return {
+    email: stringField(body, "email", { required: true, max: 254 })!,
+    password: stringField(body, "password", { required: true, max: 256 })!
+  };
 }
 
 async function ensureSources() {
@@ -138,25 +311,34 @@ class AppController {
   }
 
   @Post("auth/login")
-  async login(@Body() body: { email?: string; password?: string }, @Res({ passthrough: true }) res: Response) {
+  async login(@Body() body: unknown, @Res({ passthrough: true }) res: Response) {
+    const input = loginInput(body);
     const user = await getLocalUser();
-    if (body.email !== user.email || !user.passwordHash || !body.password || !verifyPassword(body.password, user.passwordHash)) {
+    if (input.email !== user.email || !user.passwordHash || !verifyPassword(input.password, user.passwordHash)) {
       throw new UnauthorizedException("Invalid email or password");
     }
     setSessionCookie(res, createSessionToken(user.id));
-    return { user: { email: user.email, name: user.name } };
+    const csrfToken = setCsrfCookie(res);
+    return { csrfToken, user: { email: user.email, name: user.name } };
+  }
+
+  @Get("auth/csrf")
+  csrf(@Res({ passthrough: true }) res: Response) {
+    return { csrfToken: setCsrfCookie(res) };
   }
 
   @Post("auth/logout")
-  logout(@Res({ passthrough: true }) res: Response) {
-    res.clearCookie(sessionCookieName, { path: "/" });
+  async logout(@Req() req: Request, @Res({ passthrough: true }) res: Response) {
+    await requireUser(req);
+    requireCsrf(req);
+    clearAuthCookies(res);
     return { ok: true };
   }
 
   @Get("auth/session")
-  async session(@Req() req: Request) {
+  async session(@Req() req: Request, @Res({ passthrough: true }) res: Response) {
     const user = await requireUser(req);
-    return { user: { email: user.email, name: user.name } };
+    return { csrfToken: setCsrfCookie(res), user: { email: user.email, name: user.name } };
   }
 
   @Get("profiles/me")
@@ -173,58 +355,62 @@ class AppController {
   }
 
   @Post("sources/:name")
-  async updateSource(@Req() req: Request, @Param("name") name: SourceName, @Body() body: any) {
+  async updateSource(@Req() req: Request, @Param("name") name: string, @Body() body: unknown) {
     await requireUser(req);
-    const normalizedName = String(name).toUpperCase() as SourceName;
+    requireCsrf(req);
+    const normalizedName = validateSourceName(name);
     const defaults = sourceDefaults[normalizedName];
+    const input = sourceInput(body, defaults);
 
     return prisma.source.upsert({
       where: { name: normalizedName },
       update: {
-        baseUrl: String(body.baseUrl ?? defaults.baseUrl),
-        searchUrl: String(body.searchUrl ?? defaults.searchUrl),
-        queryLabel: body.queryLabel ? String(body.queryLabel) : null,
-        enabled: Boolean(body.enabled)
+        baseUrl: input.baseUrl,
+        searchUrl: input.searchUrl,
+        queryLabel: input.queryLabel,
+        enabled: input.enabled
       },
       create: {
         name: normalizedName,
-        baseUrl: String(body.baseUrl ?? defaults.baseUrl),
-        searchUrl: String(body.searchUrl ?? defaults.searchUrl),
-        queryLabel: body.queryLabel ? String(body.queryLabel) : defaults.queryLabel,
-        enabled: body.enabled === undefined ? true : Boolean(body.enabled)
+        baseUrl: input.baseUrl,
+        searchUrl: input.searchUrl,
+        queryLabel: input.queryLabel ?? defaults.queryLabel,
+        enabled: input.enabled
       }
     });
   }
 
   @Post("profiles")
-  async upsertProfile(@Req() req: Request, @Body() body: any) {
+  async upsertProfile(@Req() req: Request, @Body() body: unknown) {
     const user = await requireUser(req);
+    requireCsrf(req);
+    const input = profileInput(body);
     return prisma.jobProfile.upsert({
       where: { userId: user.id },
       update: {
-        role: body.role,
-        seniority: body.seniority,
-        skills: body.skills ?? [],
-        location: body.location,
-        remoteOnly: Boolean(body.remoteOnly),
-        salaryMin: body.salaryMin ? Number(body.salaryMin) : null,
-        salaryCurrency: body.salaryCurrency ?? "USD",
-        includeKeywords: body.includeKeywords ?? [],
-        excludeKeywords: body.excludeKeywords ?? [],
-        matchThreshold: Number(body.matchThreshold ?? 60)
+        role: input.role,
+        seniority: input.seniority,
+        skills: input.skills,
+        location: input.location,
+        remoteOnly: input.remoteOnly,
+        salaryMin: input.salaryMin,
+        salaryCurrency: input.salaryCurrency,
+        includeKeywords: input.includeKeywords,
+        excludeKeywords: input.excludeKeywords,
+        matchThreshold: input.matchThreshold
       },
       create: {
         userId: user.id,
-        role: body.role,
-        seniority: body.seniority,
-        skills: body.skills ?? [],
-        location: body.location,
-        remoteOnly: Boolean(body.remoteOnly),
-        salaryMin: body.salaryMin ? Number(body.salaryMin) : null,
-        salaryCurrency: body.salaryCurrency ?? "USD",
-        includeKeywords: body.includeKeywords ?? [],
-        excludeKeywords: body.excludeKeywords ?? [],
-        matchThreshold: Number(body.matchThreshold ?? 60)
+        role: input.role,
+        seniority: input.seniority,
+        skills: input.skills,
+        location: input.location,
+        remoteOnly: input.remoteOnly,
+        salaryMin: input.salaryMin,
+        salaryCurrency: input.salaryCurrency,
+        includeKeywords: input.includeKeywords,
+        excludeKeywords: input.excludeKeywords,
+        matchThreshold: input.matchThreshold
       }
     });
   }
@@ -249,28 +435,33 @@ class AppController {
   @Post("vacancies/:id/save")
   async saveVacancy(@Req() req: Request, @Param("id") id: string) {
     await requireUser(req);
+    requireCsrf(req);
     return prisma.vacancy.update({ where: { id }, data: { status: "SAVED" } });
   }
 
   @Post("vacancies/:id/ignore")
   async ignoreVacancy(@Req() req: Request, @Param("id") id: string) {
     await requireUser(req);
+    requireCsrf(req);
     return prisma.vacancy.update({ where: { id }, data: { status: "IGNORED" } });
   }
 
   @Post("notifications/telegram/connect")
-  async connectTelegram(@Req() req: Request, @Body() body: { chatId: string }) {
+  async connectTelegram(@Req() req: Request, @Body() body: unknown) {
     const user = await requireUser(req);
+    requireCsrf(req);
+    const input = telegramInput(body);
     return prisma.notificationChannel.upsert({
-      where: { id: body.chatId },
-      update: { target: body.chatId, enabled: true },
-      create: { id: body.chatId, userId: user.id, type: "telegram", target: body.chatId }
+      where: { id: input.chatId },
+      update: { target: input.chatId, enabled: true },
+      create: { id: input.chatId, userId: user.id, type: "telegram", target: input.chatId }
     });
   }
 
   @Post("admin/fetch-runs/run")
   async runFetch(@Req() req: Request) {
     await requireUser(req);
+    requireCsrf(req);
     await queue.add("fetch-source:dou", { source: SourceName.DOU });
     await queue.add("fetch-source:djinni", { source: SourceName.DJINNI });
     return { queued: ["fetch-source:dou", "fetch-source:djinni"] };
@@ -293,7 +484,12 @@ class AppModule {}
 async function bootstrap() {
   assertRuntimeConfig();
   const app = await NestFactory.create(AppModule);
-  app.enableCors({ origin: process.env.WEB_ORIGIN ?? "http://localhost:3000", credentials: true });
+  app.enableCors({
+    origin: process.env.WEB_ORIGIN ?? "http://localhost:3000",
+    credentials: true,
+    methods: ["GET", "POST", "OPTIONS"],
+    allowedHeaders: ["content-type", "x-csrf-token"]
+  });
   await app.listen(Number(process.env.API_PORT ?? 4000));
 }
 

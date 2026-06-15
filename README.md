@@ -88,7 +88,7 @@ The local MVP user identity can be configured with `APP_USER_EMAIL` and `APP_USE
 
 ## Authentication
 
-The app uses a password login and HTTP-only session cookie. Configure:
+The app uses a password login, HTTP-only session cookie, and CSRF tokens for state-changing API requests. Configure:
 
 - `APP_USER_EMAIL`
 - `APP_USER_NAME`

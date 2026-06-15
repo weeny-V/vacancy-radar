@@ -2,7 +2,7 @@
 
 import { Bell, Bookmark, EyeOff, LogOut, Play, Radar, Save, Send } from "lucide-react";
 import { FormEvent, useEffect, useState } from "react";
-import { API_URL } from "../lib/api";
+import { API_URL, api } from "../lib/api";
 
 type Vacancy = {
   id: string;
@@ -121,13 +121,12 @@ export default function Page() {
   async function loginUser(event: FormEvent) {
     event.preventDefault();
     setStatus("Signing in");
-    const response = await fetch(`${API_URL}/auth/login`, {
-      method: "POST",
-      credentials: "include",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(login)
-    });
-    if (!response.ok) {
+    try {
+      await api<{ user: { email: string; name: string } }>("/auth/login", {
+        method: "POST",
+        body: JSON.stringify(login)
+      });
+    } catch {
       setStatus("Invalid email or password");
       return;
     }
@@ -137,7 +136,7 @@ export default function Page() {
   }
 
   async function logoutUser() {
-    await fetch(`${API_URL}/auth/logout`, { method: "POST", credentials: "include" });
+    await api<{ ok: boolean }>("/auth/logout", { method: "POST" });
     setIsAuthenticated(false);
     setStatus("Logged out");
   }
@@ -145,10 +144,8 @@ export default function Page() {
   async function saveProfile(event: FormEvent) {
     event.preventDefault();
     setStatus("Saving profile");
-    await fetch(`${API_URL}/profiles`, {
+    await api("/profiles", {
       method: "POST",
-      credentials: "include",
-      headers: { "content-type": "application/json" },
       body: JSON.stringify({
         ...profile,
         skills: splitList(profile.skills),
@@ -165,10 +162,8 @@ export default function Page() {
   async function connectTelegram(event: FormEvent) {
     event.preventDefault();
     setStatus("Connecting Telegram");
-    await fetch(`${API_URL}/notifications/telegram/connect`, {
+    await api("/notifications/telegram/connect", {
       method: "POST",
-      credentials: "include",
-      headers: { "content-type": "application/json" },
       body: JSON.stringify({ chatId: telegramChatId })
     });
     setStatus("Telegram connected");
@@ -176,13 +171,12 @@ export default function Page() {
 
   async function saveSource(source: SourceSetting) {
     setStatus(`Saving ${source.name} source`);
-    const response = await fetch(`${API_URL}/sources/${source.name}`, {
-      method: "POST",
-      credentials: "include",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(source)
-    });
-    if (!response.ok) {
+    try {
+      await api(`/sources/${source.name}`, {
+        method: "POST",
+        body: JSON.stringify(source)
+      });
+    } catch {
       setStatus(`${source.name} source save failed`);
       return;
     }
@@ -192,7 +186,7 @@ export default function Page() {
 
   async function runFetch() {
     setStatus("Fetch queued");
-    await fetch(`${API_URL}/admin/fetch-runs/run`, { method: "POST", credentials: "include" });
+    await api<{ queued: string[] }>("/admin/fetch-runs/run", { method: "POST" });
     for (const delay of [900, 1800, 3200]) {
       setTimeout(async () => {
         try {
@@ -211,7 +205,7 @@ export default function Page() {
   }
 
   async function updateVacancy(id: string, action: "save" | "ignore") {
-    await fetch(`${API_URL}/vacancies/${id}/${action}`, { method: "POST", credentials: "include" });
+    await api(`/vacancies/${id}/${action}`, { method: "POST" });
     await refresh();
   }
 
