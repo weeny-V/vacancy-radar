@@ -1,6 +1,6 @@
 "use client";
 
-import { Bell, Bookmark, EyeOff, LogOut, Play, Radar, Save, Send } from "lucide-react";
+import { Bell, Bookmark, EyeOff, LogOut, Play, Radar, Save, Search, Send } from "lucide-react";
 import { FormEvent, useEffect, useState } from "react";
 import { API_URL, api } from "../lib/api";
 
@@ -41,6 +41,13 @@ type SourceSetting = {
   enabled: boolean;
 };
 
+type TelegramChat = {
+  chatId: string;
+  title: string;
+  username?: string | null;
+  lastMessageAt?: string | null;
+};
+
 const splitList = (value: string) => value.split(",").map((item) => item.trim()).filter(Boolean);
 
 const summarizeFetchRuns = (latestRuns: FetchRun[]) => {
@@ -63,6 +70,7 @@ export default function Page() {
   const [login, setLogin] = useState({ email: "", password: "" });
   const [status, setStatus] = useState("Ready");
   const [telegramChatId, setTelegramChatId] = useState("");
+  const [telegramChats, setTelegramChats] = useState<TelegramChat[]>([]);
   const [profile, setProfile] = useState({
     role: "Frontend Developer",
     seniority: "Middle",
@@ -162,11 +170,51 @@ export default function Page() {
   async function connectTelegram(event: FormEvent) {
     event.preventDefault();
     setStatus("Connecting Telegram");
-    await api("/notifications/telegram/connect", {
-      method: "POST",
-      body: JSON.stringify({ chatId: telegramChatId })
-    });
-    setStatus("Telegram connected");
+    try {
+      await api("/notifications/telegram/connect", {
+        method: "POST",
+        body: JSON.stringify({ chatId: telegramChatId })
+      });
+      setStatus("Telegram connected");
+    } catch {
+      setStatus("Telegram connection failed");
+    }
+  }
+
+  async function findTelegramChats() {
+    setStatus("Checking Telegram");
+    try {
+      const response = await api<{ chats: TelegramChat[] }>("/notifications/telegram/chats");
+      setTelegramChats(response.chats);
+      setStatus(response.chats.length ? "Telegram chats found" : "No recent Telegram chats found");
+    } catch {
+      setStatus("Telegram lookup failed");
+    }
+  }
+
+  async function connectLatestTelegram() {
+    setStatus("Connecting latest Telegram chat");
+    try {
+      const response = await api<{ chat: TelegramChat }>("/notifications/telegram/connect-latest", { method: "POST" });
+      setTelegramChatId(response.chat.chatId);
+      setStatus(`Telegram connected: ${response.chat.title}`);
+    } catch {
+      setStatus("Telegram connection failed");
+    }
+  }
+
+  async function connectTelegramChat(chat: TelegramChat) {
+    setStatus(`Connecting ${chat.title}`);
+    try {
+      await api("/notifications/telegram/connect", {
+        method: "POST",
+        body: JSON.stringify({ chatId: chat.chatId })
+      });
+      setTelegramChatId(chat.chatId);
+      setStatus(`Telegram connected: ${chat.title}`);
+    } catch {
+      setStatus("Telegram connection failed");
+    }
   }
 
   async function saveSource(source: SourceSetting) {
@@ -266,6 +314,22 @@ export default function Page() {
             <label>Chat ID<input value={telegramChatId} onChange={(event) => setTelegramChatId(event.target.value)} /></label>
             <button className="button" type="submit"><Send size={16} />Connect</button>
           </form>
+          <div className="actions" style={{ marginTop: 10 }}>
+            <button className="button secondary" type="button" onClick={findTelegramChats}><Search size={16} />Find chats</button>
+            <button className="button secondary" type="button" onClick={connectLatestTelegram}><Send size={16} />Connect latest</button>
+          </div>
+          {telegramChats.length > 0 ? (
+            <div className="admin-list" style={{ marginTop: 12 }}>
+              {telegramChats.map((chat) => (
+                <div className="fetch-run telegram-chat" key={chat.chatId}>
+                  <span><strong>{chat.title}</strong> {chat.username ? `@${chat.username}` : ""} · {chat.chatId}</span>
+                  <button className="button secondary" type="button" onClick={() => connectTelegramChat(chat)}>
+                    <Send size={16} />Connect
+                  </button>
+                </div>
+              ))}
+            </div>
+          ) : null}
 
           <h3 style={{ marginTop: 24 }}>Sources</h3>
           <div className="form-grid">

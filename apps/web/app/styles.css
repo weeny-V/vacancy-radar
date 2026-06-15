@@ -228,6 +228,14 @@ textarea {
   padding-top: 8px;
 }
 
+.telegram-chat {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: space-between;
+}
+
 @media (max-width: 920px) {
   .content {
     grid-template-columns: 1fr;

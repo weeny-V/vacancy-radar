@@ -328,6 +328,84 @@ function telegramInput(bodyValue: unknown) {
   return { chatId };
 }
 
+type TelegramChatCandidate = {
+  chatId: string;
+  title: string;
+  username?: string | null;
+  lastMessageAt?: string | null;
+};
+
+function telegramToken() {
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  if (!token) throw new BadRequestException("TELEGRAM_BOT_TOKEN is not configured");
+  return token;
+}
+
+function telegramChatTitle(chat: Record<string, unknown>) {
+  const title = typeof chat.title === "string" ? chat.title : null;
+  const firstName = typeof chat.first_name === "string" ? chat.first_name : null;
+  const lastName = typeof chat.last_name === "string" ? chat.last_name : null;
+  const username = typeof chat.username === "string" ? `@${chat.username}` : null;
+  const fullName = [firstName, lastName].filter(Boolean).join(" ");
+  return title ?? (fullName || username || "Telegram chat");
+}
+
+function telegramMessageFromUpdate(update: Record<string, unknown>) {
+  for (const key of ["message", "edited_message", "channel_post", "edited_channel_post"]) {
+    const message = update[key];
+    if (message && typeof message === "object" && !Array.isArray(message)) {
+      return message as Record<string, unknown>;
+    }
+  }
+  return null;
+}
+
+async function fetchTelegramChatCandidates(): Promise<TelegramChatCandidate[]> {
+  const response = await fetch(`https://api.telegram.org/bot${telegramToken()}/getUpdates`, {
+    headers: { "content-type": "application/json" }
+  });
+  const payload = await response.json().catch(() => null) as {
+    ok?: boolean;
+    description?: string;
+    result?: Array<Record<string, unknown>>;
+  } | null;
+
+  if (!response.ok || !payload?.ok) {
+    throw new BadRequestException(payload?.description ?? "Telegram getUpdates failed");
+  }
+
+  const byChatId = new Map<string, TelegramChatCandidate>();
+  for (const update of payload.result ?? []) {
+    const message = telegramMessageFromUpdate(update);
+    const chat = message?.chat;
+    if (!chat || typeof chat !== "object" || Array.isArray(chat)) continue;
+    const chatRecord = chat as Record<string, unknown>;
+    const id = chatRecord.id;
+    if (typeof id !== "number" && typeof id !== "string") continue;
+
+    const chatId = String(id);
+    const date = typeof message?.date === "number" ? new Date(message.date * 1000).toISOString() : null;
+    byChatId.set(chatId, {
+      chatId,
+      title: telegramChatTitle(chatRecord),
+      username: typeof chatRecord.username === "string" ? chatRecord.username : null,
+      lastMessageAt: date
+    });
+  }
+
+  return Array.from(byChatId.values()).sort((left, right) =>
+    String(right.lastMessageAt ?? "").localeCompare(String(left.lastMessageAt ?? ""))
+  );
+}
+
+async function upsertTelegramChannel(userId: string, chatId: string) {
+  return prisma.notificationChannel.upsert({
+    where: { id: chatId },
+    update: { target: chatId, enabled: true },
+    create: { id: chatId, userId, type: "telegram", target: chatId }
+  });
+}
+
 function loginInput(bodyValue: unknown) {
   const body = assertObject(bodyValue);
   return {
@@ -506,11 +584,25 @@ class AppController {
     const user = await requireUser(req);
     requireCsrf(req);
     const input = telegramInput(body);
-    return prisma.notificationChannel.upsert({
-      where: { id: input.chatId },
-      update: { target: input.chatId, enabled: true },
-      create: { id: input.chatId, userId: user.id, type: "telegram", target: input.chatId }
-    });
+    return upsertTelegramChannel(user.id, input.chatId);
+  }
+
+  @Get("notifications/telegram/chats")
+  async telegramChats(@Req() req: Request) {
+    await requireUser(req);
+    return { chats: await fetchTelegramChatCandidates() };
+  }
+
+  @Post("notifications/telegram/connect-latest")
+  async connectLatestTelegram(@Req() req: Request) {
+    const user = await requireUser(req);
+    requireCsrf(req);
+    const [latestChat] = await fetchTelegramChatCandidates();
+    if (!latestChat) {
+      throw new BadRequestException("No recent Telegram chats found. Send /start to the bot, then try again.");
+    }
+    const channel = await upsertTelegramChannel(user.id, latestChat.chatId);
+    return { channel, chat: latestChat };
   }
 
   @Post("admin/fetch-runs/run")

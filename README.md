@@ -81,7 +81,7 @@ npm run prisma:migrate:baseline
 
 ## Telegram Setup
 
-Create a bot with BotFather, put its token into `TELEGRAM_BOT_TOKEN`, then send a message to the bot. Use the Telegram chat ID in the web settings screen.
+Create a bot with BotFather and put its token into `TELEGRAM_BOT_TOKEN`. Send `/start` to the bot, then use the Telegram panel to find recent chats and connect the latest chat. Manual chat ID entry is still available.
 
 ## Source Settings
 
