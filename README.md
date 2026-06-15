@@ -42,9 +42,35 @@ docker compose up --build
 npm install
 npm run prisma:generate
 npm run prisma:migrate
+npm run prisma:migrate:deploy
 npm run prisma:seed
 npm run dev
 npm test
+```
+
+## Database Lifecycle
+
+Schema changes are tracked as Prisma migrations in `prisma/migrations`.
+
+Local development:
+
+```bash
+npm run prisma:migrate
+npm run prisma:seed
+```
+
+Production or Docker startup:
+
+```bash
+npm run prisma:migrate:deploy
+```
+
+Seeding is not part of production startup. Run `npm run prisma:seed` only when you intentionally want to create or update the local MVP user/profile/source defaults.
+
+If you already created a local database with the earlier `prisma db push` flow, mark the initial migration as applied once:
+
+```bash
+npm run prisma:migrate:baseline
 ```
 
 ## Telegram Setup

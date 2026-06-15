@@ -13,7 +13,8 @@
     "lint": "npm run lint --workspaces --if-present",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
-    "prisma:push": "prisma db push",
+    "prisma:migrate:deploy": "prisma migrate deploy",
+    "prisma:migrate:baseline": "prisma migrate resolve --applied 20260615090000_init",
     "prisma:seed": "tsx prisma/seed.ts",
     "docker:up": "docker compose up --build"
   },
