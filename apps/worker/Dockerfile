@@ -1,5 +1,6 @@
-FROM node:21-alpine
+FROM node:22-alpine
 WORKDIR /app
+RUN apk add --no-cache openssl
 COPY package*.json ./
 COPY apps/worker/package.json apps/worker/package.json
 COPY packages/shared/package.json packages/shared/package.json

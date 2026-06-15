@@ -2,6 +2,9 @@
   "name": "vacancy-radar",
   "version": "0.1.0",
   "private": true,
+  "engines": {
+    "node": ">=22.12.0"
+  },
   "workspaces": [
     "apps/*",
     "packages/*"
@@ -24,9 +27,12 @@
     "prisma": "^5.18.0",
     "tsx": "^4.16.2",
     "typescript": "^5.5.4",
-    "vitest": "^2.0.5"
+    "vitest": "^4.1.9"
   },
   "dependencies": {
     "@prisma/client": "^5.18.0"
+  },
+  "overrides": {
+    "postcss": "^8.5.15"
   }
 }

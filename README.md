@@ -17,6 +17,12 @@ Local-first MVP for an individual job seeker who wants one radar for relevant te
 
 ## Local Development
 
+Prerequisite: Node.js 22 LTS. If you use `nvm`, run:
+
+```bash
+nvm use
+```
+
 1. Copy environment values:
 
 ```bash
