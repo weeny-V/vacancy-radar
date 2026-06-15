@@ -32,6 +32,15 @@ type FetchRun = {
   source: { name: string };
 };
 
+type SourceSetting = {
+  id: string;
+  name: "DOU" | "DJINNI";
+  baseUrl: string;
+  searchUrl?: string | null;
+  queryLabel?: string | null;
+  enabled: boolean;
+};
+
 const splitList = (value: string) => value.split(",").map((item) => item.trim()).filter(Boolean);
 
 const summarizeFetchRuns = (latestRuns: FetchRun[]) => {
@@ -49,6 +58,7 @@ const summarizeFetchRuns = (latestRuns: FetchRun[]) => {
 export default function Page() {
   const [vacancies, setVacancies] = useState<Vacancy[]>([]);
   const [runs, setRuns] = useState<FetchRun[]>([]);
+  const [sources, setSources] = useState<SourceSetting[]>([]);
   const [status, setStatus] = useState("Ready");
   const [telegramChatId, setTelegramChatId] = useState("");
   const [profile, setProfile] = useState({
@@ -65,13 +75,15 @@ export default function Page() {
   });
 
   async function refresh() {
-    const [vacanciesResponse, runsResponse, profileResponse] = await Promise.all([
+    const [vacanciesResponse, runsResponse, sourcesResponse, profileResponse] = await Promise.all([
       fetch(`${API_URL}/vacancies`).then((response) => response.json()),
       fetch(`${API_URL}/admin/fetch-runs`).then((response) => response.json()),
+      fetch(`${API_URL}/sources`).then((response) => response.json()),
       fetch(`${API_URL}/profiles/me`).then((response) => response.json()).catch(() => null)
     ]);
     setVacancies(vacanciesResponse);
     setRuns(runsResponse);
+    setSources(sourcesResponse);
     if (profileResponse) {
       setProfile({
         role: profileResponse.role,
@@ -120,6 +132,21 @@ export default function Page() {
       body: JSON.stringify({ chatId: telegramChatId })
     });
     setStatus("Telegram connected");
+  }
+
+  async function saveSource(source: SourceSetting) {
+    setStatus(`Saving ${source.name} source`);
+    const response = await fetch(`${API_URL}/sources/${source.name}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(source)
+    });
+    if (!response.ok) {
+      setStatus(`${source.name} source save failed`);
+      return;
+    }
+    setStatus(`${source.name} source saved`);
+    await refresh();
   }
 
   async function runFetch() {
@@ -183,6 +210,45 @@ export default function Page() {
             <label>Chat ID<input value={telegramChatId} onChange={(event) => setTelegramChatId(event.target.value)} /></label>
             <button className="button" type="submit"><Send size={16} />Connect</button>
           </form>
+
+          <h3 style={{ marginTop: 24 }}>Sources</h3>
+          <div className="form-grid">
+            {sources.map((source) => (
+              <div className="source-box" key={source.id}>
+                <label>
+                  {source.name} search URL
+                  <input
+                    value={source.searchUrl ?? ""}
+                    onChange={(event) => setSources((current) => current.map((item) => (
+                      item.id === source.id ? { ...item, searchUrl: event.target.value } : item
+                    )))}
+                  />
+                </label>
+                <label>
+                  Label
+                  <input
+                    value={source.queryLabel ?? ""}
+                    onChange={(event) => setSources((current) => current.map((item) => (
+                      item.id === source.id ? { ...item, queryLabel: event.target.value } : item
+                    )))}
+                  />
+                </label>
+                <label className="toggle">
+                  <input
+                    type="checkbox"
+                    checked={source.enabled}
+                    onChange={(event) => setSources((current) => current.map((item) => (
+                      item.id === source.id ? { ...item, enabled: event.target.checked } : item
+                    )))}
+                  />
+                  Enabled
+                </label>
+                <button className="button secondary" type="button" onClick={() => saveSource(source)}>
+                  <Save size={16} />Save {source.name}
+                </button>
+              </div>
+            ))}
+          </div>
 
           <h3 style={{ marginTop: 24 }}>Fetch History</h3>
           <div className="admin-list">

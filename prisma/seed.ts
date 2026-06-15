@@ -2,11 +2,14 @@ import { PrismaClient, SourceName } from "@prisma/client";
 
 const prisma = new PrismaClient();
 
+const appUserEmail = process.env.APP_USER_EMAIL ?? "local@vacancy-radar.dev";
+const appUserName = process.env.APP_USER_NAME ?? "Local Job Seeker";
+
 async function main() {
   const user = await prisma.user.upsert({
-    where: { email: "local@vacancy-radar.dev" },
+    where: { email: appUserEmail },
     update: {},
-    create: { email: "local@vacancy-radar.dev", name: "Local Job Seeker" }
+    create: { email: appUserEmail, name: appUserName }
   });
 
   await prisma.jobProfile.upsert({
@@ -29,13 +32,23 @@ async function main() {
   await prisma.source.upsert({
     where: { name: SourceName.DOU },
     update: {},
-    create: { name: SourceName.DOU, baseUrl: "https://jobs.dou.ua" }
+    create: {
+      name: SourceName.DOU,
+      baseUrl: "https://jobs.dou.ua",
+      searchUrl: "https://jobs.dou.ua/vacancies/?category=Front%20End",
+      queryLabel: "Front End"
+    }
   });
 
   await prisma.source.upsert({
     where: { name: SourceName.DJINNI },
     update: {},
-    create: { name: SourceName.DJINNI, baseUrl: "https://djinni.co/jobs" }
+    create: {
+      name: SourceName.DJINNI,
+      baseUrl: "https://djinni.co/jobs",
+      searchUrl: "https://djinni.co/jobs/?primary_keyword=JavaScript",
+      queryLabel: "JavaScript"
+    }
   });
 
 }

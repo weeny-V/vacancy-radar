@@ -8,9 +8,17 @@ import { canonicalizeUrl, formatTelegramMessage, NormalizedVacancy, scoreVacancy
 const prisma = new PrismaClient();
 const connection = new IORedis(process.env.REDIS_URL ?? "redis://localhost:6379", { maxRetriesPerRequest: null });
 
-const sourceUrls: Record<SourceName, string> = {
-  DOU: "https://jobs.dou.ua/vacancies/?category=Front%20End",
-  DJINNI: "https://djinni.co/jobs/?primary_keyword=JavaScript"
+const sourceDefaults: Record<SourceName, { baseUrl: string; searchUrl: string; queryLabel: string }> = {
+  DOU: {
+    baseUrl: "https://jobs.dou.ua",
+    searchUrl: "https://jobs.dou.ua/vacancies/?category=Front%20End",
+    queryLabel: "Front End"
+  },
+  DJINNI: {
+    baseUrl: "https://djinni.co/jobs",
+    searchUrl: "https://djinni.co/jobs/?primary_keyword=JavaScript",
+    queryLabel: "JavaScript"
+  }
 };
 
 function hashVacancy(input: string) {
@@ -27,8 +35,8 @@ async function fetchHtml(url: string) {
   return response.text();
 }
 
-async function fetchDou(): Promise<NormalizedVacancy[]> {
-  const html = await fetchHtml(sourceUrls.DOU);
+async function fetchDou(searchUrl: string): Promise<NormalizedVacancy[]> {
+  const html = await fetchHtml(searchUrl);
   const $ = cheerio.load(html);
   const vacancies: NormalizedVacancy[] = [];
   const seen = new Set<string>();
@@ -63,8 +71,8 @@ async function fetchDou(): Promise<NormalizedVacancy[]> {
   return vacancies;
 }
 
-async function fetchDjinni(): Promise<NormalizedVacancy[]> {
-  const html = await fetchHtml(sourceUrls.DJINNI);
+async function fetchDjinni(searchUrl: string): Promise<NormalizedVacancy[]> {
+  const html = await fetchHtml(searchUrl);
   const $ = cheerio.load(html);
   const vacancies: NormalizedVacancy[] = [];
   const seen = new Set<string>();
@@ -124,21 +132,28 @@ async function sendTelegram(chatId: string, text: string) {
 }
 
 async function processSource(sourceName: SourceName) {
+  const defaults = sourceDefaults[sourceName];
   const source = await prisma.source.upsert({
     where: { name: sourceName },
     update: {},
     create: {
       name: sourceName,
-      baseUrl: sourceName === "DOU" ? "https://jobs.dou.ua" : "https://djinni.co/jobs"
+      baseUrl: defaults.baseUrl,
+      searchUrl: defaults.searchUrl,
+      queryLabel: defaults.queryLabel
     }
   });
   const run = await prisma.sourceFetchRun.create({ data: { sourceId: source.id, status: "running" } });
 
   try {
+    if (!source.enabled) {
+      throw new Error(`${sourceName} source is disabled`);
+    }
+    const searchUrl = source.searchUrl ?? defaults.searchUrl;
     const user = await prisma.user.findFirst({ include: { profile: true, notificationChannels: true } });
-    const vacancies = sourceName === "DOU" ? await fetchDou() : await fetchDjinni();
+    const vacancies = sourceName === "DOU" ? await fetchDou(searchUrl) : await fetchDjinni(searchUrl);
     if (vacancies.length === 0) {
-      throw new Error(`No vacancies parsed from ${sourceUrls[sourceName]}`);
+      throw new Error(`No vacancies parsed from ${searchUrl}`);
     }
     let importedCount = 0;
     let duplicateCount = 0;

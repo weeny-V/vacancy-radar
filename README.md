@@ -48,3 +48,12 @@ npm test
 ## Telegram Setup
 
 Create a bot with BotFather, put its token into `TELEGRAM_BOT_TOKEN`, then send a message to the bot. Use the Telegram chat ID in the web settings screen.
+
+## Source Settings
+
+DOU and Djinni search URLs are stored in the database and can be edited from the dashboard under Sources. Defaults are:
+
+- DOU: `https://jobs.dou.ua/vacancies/?category=Front%20End`
+- Djinni: `https://djinni.co/jobs/?primary_keyword=JavaScript`
+
+The local MVP user identity can be configured with `APP_USER_EMAIL` and `APP_USER_NAME`.

@@ -59,6 +59,8 @@ model Source {
   id          String           @id @default(cuid())
   name        SourceName       @unique
   baseUrl     String
+  searchUrl   String?
+  queryLabel  String?
   enabled     Boolean          @default(true)
   vacancies   Vacancy[]
   fetchRuns   SourceFetchRun[]
