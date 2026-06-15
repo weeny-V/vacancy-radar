@@ -102,3 +102,12 @@ The app uses a password login, HTTP-only session cookie, and CSRF tokens for sta
 - `AUTH_SECRET`
 
 For production, `AUTH_SECRET` and `APP_USER_PASSWORD` must be changed from the local defaults.
+
+## Rate Limits
+
+Login attempts are limited per IP and email. Manual admin fetches are limited per user. Configure:
+
+- `LOGIN_RATE_LIMIT_MAX`
+- `LOGIN_RATE_LIMIT_WINDOW_SECONDS`
+- `ADMIN_FETCH_RATE_LIMIT_MAX`
+- `ADMIN_FETCH_RATE_LIMIT_WINDOW_SECONDS`

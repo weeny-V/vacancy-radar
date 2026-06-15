@@ -5,6 +5,8 @@ import {
   Controller,
   ForbiddenException,
   Get,
+  HttpException,
+  HttpStatus,
   Module,
   Param,
   Post,
@@ -30,6 +32,10 @@ const authSecret = process.env.AUTH_SECRET ?? "vacancy-radar-dev-secret";
 const sessionCookieName = "vacancy_radar_session";
 const csrfCookieName = "vacancy_radar_csrf";
 const sessionTtlMs = 7 * 24 * 60 * 60 * 1000;
+const loginRateLimitMax = Number(process.env.LOGIN_RATE_LIMIT_MAX ?? 5);
+const loginRateLimitWindowMs = Number(process.env.LOGIN_RATE_LIMIT_WINDOW_SECONDS ?? 15 * 60) * 1000;
+const adminFetchRateLimitMax = Number(process.env.ADMIN_FETCH_RATE_LIMIT_MAX ?? 6);
+const adminFetchRateLimitWindowMs = Number(process.env.ADMIN_FETCH_RATE_LIMIT_WINDOW_SECONDS ?? 60 * 60) * 1000;
 const sourceDefaults: Record<SourceName, { baseUrl: string; searchUrl: string; queryLabel: string }> = {
   DOU: {
     baseUrl: "https://jobs.dou.ua",
@@ -88,6 +94,10 @@ function createCsrfToken() {
   return `${nonce}.${signCsrfToken(nonce)}`;
 }
 
+function hashRateLimitPart(value: string) {
+  return createHmac("sha256", authSecret).update(value).digest("hex").slice(0, 24);
+}
+
 function verifyCsrfToken(token?: string) {
   const [nonce, signature] = String(token ?? "").split(".");
   if (!nonce || !signature) return false;
@@ -107,6 +117,50 @@ function parseCookies(header?: string) {
 function getHeaderValue(req: Request, name: string) {
   const value = req.headers[name.toLowerCase()];
   return Array.isArray(value) ? value[0] : value;
+}
+
+function getClientIp(req: Request) {
+  const forwardedFor = getHeaderValue(req, "x-forwarded-for")?.split(",")[0]?.trim();
+  return forwardedFor || req.ip || req.socket.remoteAddress || "unknown";
+}
+
+async function consumeRateLimit(options: { key: string; limit: number; windowMs: number; label: string }) {
+  const count = await connection.incr(options.key);
+  if (count === 1) {
+    await connection.pexpire(options.key, options.windowMs);
+  }
+  if (count <= options.limit) return;
+
+  const ttlMs = await connection.pttl(options.key);
+  const retryAfterSeconds = Math.max(1, Math.ceil((ttlMs > 0 ? ttlMs : options.windowMs) / 1000));
+  throw new HttpException(
+    {
+      statusCode: HttpStatus.TOO_MANY_REQUESTS,
+      message: `${options.label} rate limit exceeded. Try again in ${retryAfterSeconds} seconds.`,
+      retryAfterSeconds
+    },
+    HttpStatus.TOO_MANY_REQUESTS
+  );
+}
+
+async function consumeLoginRateLimit(req: Request, email: string) {
+  const ipPart = hashRateLimitPart(getClientIp(req));
+  const emailPart = hashRateLimitPart(email.toLowerCase());
+  await consumeRateLimit({
+    key: `rate-limit:login:${ipPart}:${emailPart}`,
+    limit: loginRateLimitMax,
+    windowMs: loginRateLimitWindowMs,
+    label: "Login"
+  });
+}
+
+async function consumeAdminFetchRateLimit(userId: string) {
+  await consumeRateLimit({
+    key: `rate-limit:admin-fetch:${hashRateLimitPart(userId)}`,
+    limit: adminFetchRateLimitMax,
+    windowMs: adminFetchRateLimitWindowMs,
+    label: "Manual fetch"
+  });
 }
 
 function requireCsrf(req: Request) {
@@ -311,8 +365,9 @@ class AppController {
   }
 
   @Post("auth/login")
-  async login(@Body() body: unknown, @Res({ passthrough: true }) res: Response) {
+  async login(@Req() req: Request, @Body() body: unknown, @Res({ passthrough: true }) res: Response) {
     const input = loginInput(body);
+    await consumeLoginRateLimit(req, input.email);
     const user = await getLocalUser();
     if (input.email !== user.email || !user.passwordHash || !verifyPassword(input.password, user.passwordHash)) {
       throw new UnauthorizedException("Invalid email or password");
@@ -460,8 +515,9 @@ class AppController {
 
   @Post("admin/fetch-runs/run")
   async runFetch(@Req() req: Request) {
-    await requireUser(req);
+    const user = await requireUser(req);
     requireCsrf(req);
+    await consumeAdminFetchRateLimit(user.id);
     await queue.add("fetch-source:dou", { source: SourceName.DOU });
     await queue.add("fetch-source:djinni", { source: SourceName.DJINNI });
     return { queued: ["fetch-source:dou", "fetch-source:djinni"] };
