@@ -67,6 +67,21 @@ textarea {
   padding: 24px;
 }
 
+.auth-shell {
+  align-items: center;
+  display: grid;
+  justify-content: center;
+  padding: 24px;
+}
+
+.auth-panel {
+  width: min(420px, calc(100vw - 32px));
+}
+
+.auth-brand {
+  margin-bottom: 18px;
+}
+
 .panel {
   background: var(--panel);
   border: 1px solid var(--line);

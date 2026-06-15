@@ -34,6 +34,8 @@ docker compose up --build
 - Web app: http://localhost:3000
 - API: http://localhost:4000/health
 
+4. Sign in with the `APP_USER_EMAIL` and `APP_USER_PASSWORD` values from `.env`.
+
 ## Useful Commands
 
 ```bash
@@ -57,3 +59,14 @@ DOU and Djinni search URLs are stored in the database and can be edited from the
 - Djinni: `https://djinni.co/jobs/?primary_keyword=JavaScript`
 
 The local MVP user identity can be configured with `APP_USER_EMAIL` and `APP_USER_NAME`.
+
+## Authentication
+
+The app uses a password login and HTTP-only session cookie. Configure:
+
+- `APP_USER_EMAIL`
+- `APP_USER_NAME`
+- `APP_USER_PASSWORD`
+- `AUTH_SECRET`
+
+For production, `AUTH_SECRET` and `APP_USER_PASSWORD` must be changed from the local defaults.

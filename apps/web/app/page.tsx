@@ -1,6 +1,6 @@
 "use client";
 
-import { Bell, Bookmark, EyeOff, Play, Radar, Save, Send } from "lucide-react";
+import { Bell, Bookmark, EyeOff, LogOut, Play, Radar, Save, Send } from "lucide-react";
 import { FormEvent, useEffect, useState } from "react";
 import { API_URL } from "../lib/api";
 
@@ -59,6 +59,8 @@ export default function Page() {
   const [vacancies, setVacancies] = useState<Vacancy[]>([]);
   const [runs, setRuns] = useState<FetchRun[]>([]);
   const [sources, setSources] = useState<SourceSetting[]>([]);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [login, setLogin] = useState({ email: "", password: "" });
   const [status, setStatus] = useState("Ready");
   const [telegramChatId, setTelegramChatId] = useState("");
   const [profile, setProfile] = useState({
@@ -76,10 +78,13 @@ export default function Page() {
 
   async function refresh() {
     const [vacanciesResponse, runsResponse, sourcesResponse, profileResponse] = await Promise.all([
-      fetch(`${API_URL}/vacancies`).then((response) => response.json()),
-      fetch(`${API_URL}/admin/fetch-runs`).then((response) => response.json()),
-      fetch(`${API_URL}/sources`).then((response) => response.json()),
-      fetch(`${API_URL}/profiles/me`).then((response) => response.json()).catch(() => null)
+      fetch(`${API_URL}/vacancies`, { credentials: "include" }).then((response) => {
+        if (response.status === 401) throw new Error("Login required");
+        return response.json();
+      }),
+      fetch(`${API_URL}/admin/fetch-runs`, { credentials: "include" }).then((response) => response.json()),
+      fetch(`${API_URL}/sources`, { credentials: "include" }).then((response) => response.json()),
+      fetch(`${API_URL}/profiles/me`, { credentials: "include" }).then((response) => response.json()).catch(() => null)
     ]);
     setVacancies(vacanciesResponse);
     setRuns(runsResponse);
@@ -101,14 +106,48 @@ export default function Page() {
   }
 
   useEffect(() => {
-    refresh().catch((error) => setStatus(error.message));
+    fetch(`${API_URL}/auth/session`, { credentials: "include" })
+      .then((response) => {
+        if (!response.ok) throw new Error("Login required");
+        setIsAuthenticated(true);
+        return refresh();
+      })
+      .catch(() => {
+        setIsAuthenticated(false);
+        setStatus("Login required");
+      });
   }, []);
+
+  async function loginUser(event: FormEvent) {
+    event.preventDefault();
+    setStatus("Signing in");
+    const response = await fetch(`${API_URL}/auth/login`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(login)
+    });
+    if (!response.ok) {
+      setStatus("Invalid email or password");
+      return;
+    }
+    setIsAuthenticated(true);
+    setStatus("Signed in");
+    await refresh();
+  }
+
+  async function logoutUser() {
+    await fetch(`${API_URL}/auth/logout`, { method: "POST", credentials: "include" });
+    setIsAuthenticated(false);
+    setStatus("Logged out");
+  }
 
   async function saveProfile(event: FormEvent) {
     event.preventDefault();
     setStatus("Saving profile");
     await fetch(`${API_URL}/profiles`, {
       method: "POST",
+      credentials: "include",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         ...profile,
@@ -128,6 +167,7 @@ export default function Page() {
     setStatus("Connecting Telegram");
     await fetch(`${API_URL}/notifications/telegram/connect`, {
       method: "POST",
+      credentials: "include",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ chatId: telegramChatId })
     });
@@ -138,6 +178,7 @@ export default function Page() {
     setStatus(`Saving ${source.name} source`);
     const response = await fetch(`${API_URL}/sources/${source.name}`, {
       method: "POST",
+      credentials: "include",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(source)
     });
@@ -151,13 +192,13 @@ export default function Page() {
 
   async function runFetch() {
     setStatus("Fetch queued");
-    await fetch(`${API_URL}/admin/fetch-runs/run`, { method: "POST" });
+    await fetch(`${API_URL}/admin/fetch-runs/run`, { method: "POST", credentials: "include" });
     for (const delay of [900, 1800, 3200]) {
       setTimeout(async () => {
         try {
           const [vacanciesResponse, runsResponse] = await Promise.all([
-            fetch(`${API_URL}/vacancies`).then((response) => response.json()),
-            fetch(`${API_URL}/admin/fetch-runs`).then((response) => response.json())
+            fetch(`${API_URL}/vacancies`, { credentials: "include" }).then((response) => response.json()),
+            fetch(`${API_URL}/admin/fetch-runs`, { credentials: "include" }).then((response) => response.json())
           ]);
           setVacancies(vacanciesResponse);
           setRuns(runsResponse);
@@ -170,8 +211,28 @@ export default function Page() {
   }
 
   async function updateVacancy(id: string, action: "save" | "ignore") {
-    await fetch(`${API_URL}/vacancies/${id}/${action}`, { method: "POST" });
+    await fetch(`${API_URL}/vacancies/${id}/${action}`, { method: "POST", credentials: "include" });
     await refresh();
+  }
+
+  if (!isAuthenticated) {
+    return (
+      <main className="shell auth-shell">
+        <section className="panel auth-panel">
+          <div className="brand auth-brand">
+            <span className="brand-mark"><Radar size={18} /></span>
+            <span>Vacancy Radar</span>
+          </div>
+          <h2>Sign In</h2>
+          <form className="form-grid" onSubmit={loginUser}>
+            <label>Email<input value={login.email} onChange={(event) => setLogin({ ...login, email: event.target.value })} /></label>
+            <label>Password<input type="password" value={login.password} onChange={(event) => setLogin({ ...login, password: event.target.value })} /></label>
+            <button className="button" type="submit"><Radar size={16} />Sign in</button>
+          </form>
+          <p className="status"><Bell size={14} /> {status}</p>
+        </section>
+      </main>
+    );
   }
 
   return (
@@ -184,6 +245,7 @@ export default function Page() {
         <div className="actions">
           <button className="button secondary" onClick={refresh}><Radar size={16} />Refresh</button>
           <button className="button" onClick={runFetch}><Play size={16} />Run fetch</button>
+          <button className="button secondary" onClick={logoutUser}><LogOut size={16} />Logout</button>
         </div>
       </header>
 
