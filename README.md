@@ -111,3 +111,13 @@ Login attempts are limited per IP and email. Manual admin fetches are limited pe
 - `LOGIN_RATE_LIMIT_WINDOW_SECONDS`
 - `ADMIN_FETCH_RATE_LIMIT_MAX`
 - `ADMIN_FETCH_RATE_LIMIT_WINDOW_SECONDS`
+
+## Scheduled Fetching
+
+The worker schedules automatic DOU and Djinni polling with BullMQ repeatable jobs. Configure:
+
+- `SCHEDULED_FETCH_ENABLED`
+- `DOU_FETCH_INTERVAL_MINUTES`
+- `DJINNI_FETCH_INTERVAL_MINUTES`
+
+Intervals must be at least 1 minute. Manual "Run fetch" still works independently.

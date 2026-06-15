@@ -1,5 +1,5 @@
 import { PrismaClient, SourceName } from "@prisma/client";
-import { Worker } from "bullmq";
+import { Queue, Worker } from "bullmq";
 import * as cheerio from "cheerio";
 import { createHash } from "node:crypto";
 import IORedis from "ioredis";
@@ -7,6 +7,10 @@ import { canonicalizeUrl, formatTelegramMessage, NormalizedVacancy, scoreVacancy
 
 const prisma = new PrismaClient();
 const connection = new IORedis(process.env.REDIS_URL ?? "redis://localhost:6379", { maxRetriesPerRequest: null });
+const queue = new Queue("vacancy-radar", { connection: connection as any });
+const scheduleEnabled = process.env.SCHEDULED_FETCH_ENABLED !== "false";
+const douFetchIntervalMs = Number(process.env.DOU_FETCH_INTERVAL_MINUTES ?? 30) * 60 * 1000;
+const djinniFetchIntervalMs = Number(process.env.DJINNI_FETCH_INTERVAL_MINUTES ?? 30) * 60 * 1000;
 
 const sourceDefaults: Record<SourceName, { baseUrl: string; searchUrl: string; queryLabel: string }> = {
   DOU: {
@@ -236,9 +240,61 @@ async function processSource(sourceName: SourceName) {
   }
 }
 
-new Worker("vacancy-radar", async (job) => {
+function assertPositiveInterval(name: string, intervalMs: number) {
+  if (!Number.isFinite(intervalMs) || intervalMs < 60_000) {
+    throw new Error(`${name} must be at least 1 minute`);
+  }
+}
+
+async function upsertFetchSchedule(source: SourceName, intervalMs: number) {
+  const jobName = source === SourceName.DOU ? "fetch-source:dou" : "fetch-source:djinni";
+  await queue.upsertJobScheduler(
+    `scheduled-fetch:${source.toLowerCase()}`,
+    { every: intervalMs },
+    {
+      name: jobName,
+      data: { source, scheduled: true },
+      opts: {
+        attempts: 2,
+        backoff: { type: "fixed", delay: 60_000 },
+        removeOnComplete: 20,
+        removeOnFail: 50
+      }
+    }
+  );
+  console.log(`${source} scheduled fetch enabled every ${Math.round(intervalMs / 60_000)} minutes`);
+}
+
+async function configureScheduledFetches() {
+  if (!scheduleEnabled) {
+    await Promise.all([
+      queue.removeJobScheduler("scheduled-fetch:dou"),
+      queue.removeJobScheduler("scheduled-fetch:djinni")
+    ]);
+    console.log("Scheduled fetches disabled");
+    return;
+  }
+
+  assertPositiveInterval("DOU_FETCH_INTERVAL_MINUTES", douFetchIntervalMs);
+  assertPositiveInterval("DJINNI_FETCH_INTERVAL_MINUTES", djinniFetchIntervalMs);
+  await Promise.all([
+    upsertFetchSchedule(SourceName.DOU, douFetchIntervalMs),
+    upsertFetchSchedule(SourceName.DJINNI, djinniFetchIntervalMs)
+  ]);
+}
+
+const worker = new Worker("vacancy-radar", async (job) => {
   if (job.name === "fetch-source:dou") return processSource("DOU");
   if (job.name === "fetch-source:djinni") return processSource("DJINNI");
 }, { connection: connection as any });
 
-console.log("Vacancy Radar worker started");
+worker.on("failed", (job, error) => {
+  console.error(`${job?.name ?? "unknown"} job failed: ${error.message}`);
+});
+
+configureScheduledFetches()
+  .then(() => console.log("Vacancy Radar worker started"))
+  .catch((error) => {
+    console.error(`Worker startup failed: ${error instanceof Error ? error.message : String(error)}`);
+    process.exit(1);
+  });
